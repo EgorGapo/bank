@@ -3,10 +3,13 @@ package usecases
 import (
 	"context"
 	"log/slog"
+
+	"github.com/EgorGapo/bank/internal/domain"
+	"github.com/google/uuid"
 )
 
 type Storage interface {
-	CreateAccount(ctx context.Context)
+	CreateAccount(ctx context.Context, account *domain.Account) error
 }
 
 type Bank struct {
@@ -21,7 +24,13 @@ func NewBank(storage Storage, logger *slog.Logger) *Bank {
 	}
 }
 
-func (s *Bank) CreateAccount(ctx context.Context) {
-	s.storage.CreateAccount(ctx)
-	panic("not implemented")
+func (s *Bank) CreateAccount(ctx context.Context) (*domain.Account, error) {
+	acc := &domain.Account{
+		ID:     uuid.NewString(),
+		Status: "active",
+	}
+	if err := s.storage.CreateAccount(ctx, acc); err != nil {
+		return nil, err
+	}
+	return acc, nil
 }

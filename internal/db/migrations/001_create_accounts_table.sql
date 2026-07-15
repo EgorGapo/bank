@@ -5,7 +5,7 @@ CREATE TABLE accounts
 (
     id UUID PRIMARY KEY,
     status TEXT NOT NULL DEFAULT 'active' CONSTRAINT accounts_status_check CHECK (status IN ('active', 'frozen', 'closed')),
-    balance BIGINT NOT NULL DEFAULT 0 CONSTRAINT accounts_balance_non_negative CHECK (balance >= 0)
+    balance BIGINT NOT NULL DEFAULT 0 CONSTRAINT accounts_balance_non_negative CHECK (balance >= 0),
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT now() NOT NULL 
 ); 

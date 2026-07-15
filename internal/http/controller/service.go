@@ -3,10 +3,12 @@ package controller
 import (
 	"context"
 	"log/slog"
+
+	"github.com/EgorGapo/bank/internal/domain"
 )
 
 type Bank interface {
-	CreateAccount(ctx context.Context)
+	CreateAccount(ctx context.Context) (*domain.Account, error)
 }
 
 type Implementation struct {
