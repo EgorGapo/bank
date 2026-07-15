@@ -9,6 +9,7 @@ import (
 
 type Bank interface {
 	CreateAccount(ctx context.Context) (*domain.Account, error)
+	GetAccount(ctx context.Context, id string) (*domain.Account, error)
 }
 
 type Implementation struct {

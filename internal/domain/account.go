@@ -1,12 +1,17 @@
 package domain
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 const (
 	StatusActive = "active"
-	StatuClosed  = "closed"
+	StatusClosed = "closed"
 	StatusFrozen = "frozen"
 )
+
+var ErrAccountNotFound = errors.New("account not found")
 
 type Account struct {
 	ID        string

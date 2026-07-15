@@ -10,6 +10,7 @@ import (
 
 type Storage interface {
 	CreateAccount(ctx context.Context, account *domain.Account) error
+	GetAccount(ctx context.Context, id string) (*domain.Account, error)
 }
 
 type Bank struct {
@@ -27,10 +28,14 @@ func NewBank(storage Storage, logger *slog.Logger) *Bank {
 func (s *Bank) CreateAccount(ctx context.Context) (*domain.Account, error) {
 	acc := &domain.Account{
 		ID:     uuid.NewString(),
-		Status: "active",
+		Status: domain.StatusActive,
 	}
 	if err := s.storage.CreateAccount(ctx, acc); err != nil {
 		return nil, err
 	}
 	return acc, nil
+}
+
+func (s *Bank) GetAccount(ctx context.Context, id string) (*domain.Account, error) {
+	return s.storage.GetAccount(ctx, id)
 }
