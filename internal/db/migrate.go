@@ -3,6 +3,7 @@ package db
 import (
 	"embed"
 	"fmt"
+	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -19,7 +20,21 @@ func SetupPostgres(pool *pgxpool.Pool) error {
 	}
 	db := stdlib.OpenDBFromPool(pool)
 	defer db.Close()
-	if err := goose.Up(db, "migrations"); err != nil {
+
+	cmd := "up"
+	if len(os.Args) > 1 {
+		cmd = os.Args[1]
+	}
+	var err error
+	switch cmd {
+	case "up":
+		err = goose.Up(db, "migrations")
+	case "down":
+		err = goose.Down(db, "migrations")
+	case "status":
+		err = goose.Status(db, "migrations")
+	}
+	if err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
 	}
 	return nil

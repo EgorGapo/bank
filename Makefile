@@ -7,6 +7,9 @@ run:
 
 migrate:
 	go run ./cmd/migrate
+	
+migrate-down: 
+	go run ./cmd/migrate down
 
 up:
 	docker compose up -d
