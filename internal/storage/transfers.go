@@ -14,24 +14,56 @@ func isPgError(err error, code string) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == code
 }
 
-func (s *Postgres) Deposit(ctx context.Context, amount int64, transferID string, accountID string, idempotencyKey string) (*domain.Transfer, error) {
+const queryInsertTransfer = `
+	INSERT INTO transfers (id, idempotency_key, from_account_id, to_account_id, amount, type)
+	VALUES ($1, $2, $3, $4, $5, $6)`
+
+const querySelectTransferByIdempotencyKey = `
+	SELECT id, idempotency_key, from_account_id, to_account_id, amount, status, type, created_at, completed_at
+	FROM transfers
+	WHERE idempotency_key = $1`
+
+const queryAddToBalance = `
+	UPDATE accounts
+	SET balance = balance + $1
+	WHERE id = $2
+	RETURNING balance`
+
+const querySubFromBalance = `
+	UPDATE accounts
+	SET balance = balance - $1
+	WHERE id = $2
+	RETURNING balance`
+
+const queryInsertLedgerEntry = `
+	INSERT INTO ledger_entries (transfer_id, account_id, amount, balance_after)
+	VALUES ($1, $2, $3, $4)`
+
+const queryCompleteTransfer = `
+	UPDATE transfers
+	SET status = $1, completed_at = now()
+	WHERE id = $2 AND status = 'pending'
+	RETURNING id, idempotency_key, from_account_id, to_account_id, amount, status, type, created_at, completed_at`
+
+const queryCancelTransfer = `
+	UPDATE transfers
+	SET status = $1, completed_at = now()
+	WHERE id = $2  AND status = 'pending'`
+
+func (s *Postgres) Deposit(ctx context.Context, amount int64, transferID string, toAccountId string, idempotencyKey string) (*domain.Transfer, error) {
 	ans := &domain.Transfer{}
-	queryTransfer := `INSERT INTO transfers (id, idempotency_key, to_account_id, amount, type) VALUES ($1,$2,$3,$4,$5)`
-	if _, err := s.db.Exec(ctx, queryTransfer, transferID, idempotencyKey, accountID, amount, domain.TypeDeposit); err != nil {
+	if _, err := s.db.Exec(ctx, queryInsertTransfer, transferID, idempotencyKey, nil, toAccountId, amount, domain.TypeDeposit); err != nil {
 		if isPgError(err, pgFKViolation) {
 			return nil, domain.ErrAccountNotFound
 		}
 		if isPgError(err, pgUniqueViolation) {
-			queryExistingTransfer := `SELECT id, idempotency_key, to_account_id,
-											 amount, status, type, created_at, completed_at
-									  FROM transfers WHERE idempotency_key = $1`
-			err2 := s.db.QueryRow(ctx, queryExistingTransfer, idempotencyKey).
-				Scan(&ans.ID, &ans.IdempotencyKey, &ans.ToAccountID, &ans.Amount,
-					&ans.Status, &ans.Type, &ans.ErrCode, &ans.CreatedAt, &ans.CompletedAt)
-			if err2 != nil {
-				return nil, fmt.Errorf("deposit: %w", err2)
+			err := s.db.QueryRow(ctx, querySelectTransferByIdempotencyKey, idempotencyKey).
+				Scan(&ans.ID, &ans.IdempotencyKey, &ans.FromAccountID, &ans.ToAccountID, &ans.Amount,
+					&ans.Status, &ans.Type, &ans.CreatedAt, &ans.CompletedAt)
+			if err != nil {
+				return nil, fmt.Errorf("deposit: %w", err)
 			}
-			if amount != ans.Amount || accountID != ans.ToAccountID {
+			if amount != ans.Amount || ans.Type != domain.TypeDeposit || toAccountId != *ans.ToAccountID {
 				return nil, domain.ErrIdempotencyKeyReuse
 			}
 			return ans, nil
@@ -43,25 +75,70 @@ func (s *Postgres) Deposit(ctx context.Context, amount int64, transferID string,
 		return nil, fmt.Errorf("deposit failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	queryUpdateBalance := `UPDATE accounts SET balance = balance + $1 WHERE id = $2 RETURNING balance`
 	newBalance := 0
-	if err := tx.QueryRow(ctx, queryUpdateBalance, amount, accountID).Scan(&newBalance); err != nil {
+	if err := tx.QueryRow(ctx, queryAddToBalance, amount, toAccountId).Scan(&newBalance); err != nil {
 		return nil, fmt.Errorf("deposit: %w", err)
 	}
-	queryInsertIntoLedger := `INSERT INTO ledger_entries (transfer_id, account_id, amount, balance_after) VALUES ($1,$2,$3,$4)`
-	if _, err := tx.Exec(ctx, queryInsertIntoLedger, transferID, accountID, amount, newBalance); err != nil {
+	if _, err := tx.Exec(ctx, queryInsertLedgerEntry, transferID, toAccountId, amount, newBalance); err != nil {
 		return nil, fmt.Errorf("deposit: %w", err)
 	}
-	queryUpdateTransferStatus := `UPDATE transfers SET status = $1, completed_at = now() WHERE id = $2 RETURNING id, 
-								idempotency_key, to_account_id, amount, status, 
-								type, created_at, completed_at`
-	if err := tx.QueryRow(ctx, queryUpdateTransferStatus, domain.StatusCompleted, transferID).
-		Scan(&ans.ID, &ans.IdempotencyKey, &ans.ToAccountID, &ans.Amount, &ans.Status,
+	if err := tx.QueryRow(ctx, queryCompleteTransfer, domain.StatusCompleted, transferID).
+		Scan(&ans.ID, &ans.IdempotencyKey, &ans.FromAccountID, &ans.ToAccountID, &ans.Amount, &ans.Status,
 			&ans.Type, &ans.CreatedAt, &ans.CompletedAt); err != nil {
 		return nil, fmt.Errorf("deposit: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("deposit: %w", err)
+	}
+	return ans, nil
+}
+
+func (s *Postgres) Withdraw(ctx context.Context, amount int64, transferID string, fromAccountID string, idempotencyKey string) (*domain.Transfer, error) {
+	ans := &domain.Transfer{}
+	if _, err := s.db.Exec(ctx, queryInsertTransfer, transferID, idempotencyKey, fromAccountID, nil, amount, domain.TypeWithdraw); err != nil {
+		if isPgError(err, pgFKViolation) {
+			return nil, domain.ErrAccountNotFound
+		}
+		if isPgError(err, pgUniqueViolation) {
+			err := s.db.QueryRow(ctx, querySelectTransferByIdempotencyKey, idempotencyKey).
+				Scan(&ans.ID, &ans.IdempotencyKey, &ans.FromAccountID, &ans.ToAccountID, &ans.Amount,
+					&ans.Status, &ans.Type, &ans.CreatedAt, &ans.CompletedAt)
+			if err != nil {
+				return nil, fmt.Errorf("withdraw: %w", err)
+			}
+			if amount != ans.Amount || ans.Type != domain.TypeWithdraw || fromAccountID != *ans.FromAccountID {
+				return nil, domain.ErrIdempotencyKeyReuse
+			}
+			return ans, nil
+		}
+		return nil, fmt.Errorf("withdraw: %w", err)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("withdraw failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	var newBalance int64
+	if err := tx.QueryRow(ctx, querySubFromBalance, amount, fromAccountID).Scan(&newBalance); err != nil {
+		if isPgError(err, pgCheckViolation) {
+			_ = tx.Rollback(ctx)
+			if _, err := s.db.Exec(ctx, queryCancelTransfer, domain.StatusFailed, transferID); err != nil {
+				return nil, fmt.Errorf("withdraw: %w", err)
+			}
+			return nil, domain.ErrNotEnoughMoney
+		}
+		return nil, fmt.Errorf("withdraw: %w", err)
+	}
+	if _, err := tx.Exec(ctx, queryInsertLedgerEntry, transferID, fromAccountID, -amount, newBalance); err != nil {
+		return nil, fmt.Errorf("withdraw: %w", err)
+	}
+	if err := tx.QueryRow(ctx, queryCompleteTransfer, domain.StatusCompleted, transferID).
+		Scan(&ans.ID, &ans.IdempotencyKey, &ans.FromAccountID, &ans.ToAccountID, &ans.Amount, &ans.Status,
+			&ans.Type, &ans.CreatedAt, &ans.CompletedAt); err != nil {
+		return nil, fmt.Errorf("withdraw: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("withdraw: %w", err)
 	}
 	return ans, nil
 }

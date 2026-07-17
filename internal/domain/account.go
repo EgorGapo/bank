@@ -10,11 +10,14 @@ const (
 	StatusClosed    = "closed"
 	StatusFrozen    = "frozen"
 	TypeDeposit     = "deposit"
+	TypeWithdraw    = "withdraw"
 	StatusCompleted = "completed"
+	StatusFailed    = "failed"
 )
 
 var ErrAccountNotFound = errors.New("account not found")
 var ErrIdempotencyKeyReuse = errors.New("reuse of idempotency key")
+var ErrNotEnoughMoney = errors.New("not enough money in the account")
 
 type Account struct {
 	ID        string
@@ -26,8 +29,8 @@ type Account struct {
 type Transfer struct {
 	ID             string
 	IdempotencyKey string
-	FromAccountID  string
-	ToAccountID    string
+	FromAccountID  *string
+	ToAccountID    *string
 	Type           string
 	Amount         int64
 	Status         string
