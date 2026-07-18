@@ -15,5 +15,7 @@ func Setup(r chi.Router, handler *controller.Implementation, logger *slog.Logger
 	r.Route("/v1", func(r chi.Router) {
 		r.Post("/accounts", handler.CreateAccountHandler)
 		r.Get("/accounts/{id}", handler.GetAccountHandler)
+		r.Post("/accounts/{id}/deposit", handler.DepositHandler)
+		r.Post("/accounts/{id}/withdraw", handler.WithdrawHandler)
 	})
 }

@@ -1,0 +1,46 @@
+@base = http://localhost:8080/v1
+
+@depKey = 7c9e6679-7425-40de-944b-e07fc1f90ae8
+
+### 1. создать счёт
+# @name acc
+POST {{base}}/accounts
+
+### 2. депозит 500
+# @name dep
+POST {{base}}/accounts/{{acc.response.body.id}}/deposit
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"amount": 500}
+
+### 3. ретрай депозита 
+POST {{base}}/accounts/{{acc.response.body.id}}/deposit
+Idempotency-Key: {{depKey}}
+Content-Type: application/json
+
+{"amount": 500}
+
+### 4. снятие 200
+POST {{base}}/accounts/{{acc.response.body.id}}/withdraw
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"amount": 200}
+
+### 5. снятие больше баланса 
+POST {{base}}/accounts/{{acc.response.body.id}}/withdraw
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"amount": 100000}
+
+### 6. битый JSON → 400
+POST {{base}}/accounts/{{acc.response.body.id}}/deposit
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"amount": "оопс"}
+
+### 7. проверить баланс
+GET {{base}}/accounts/{{acc.response.body.id}}

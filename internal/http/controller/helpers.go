@@ -6,10 +6,13 @@ import (
 	"net/http"
 
 	"github.com/EgorGapo/bank/internal/domain"
-	"github.com/EgorGapo/bank/internal/http/middleware"
+	"github.com/EgorGapo/bank/internal/logging"
 )
 
 var ErrInvalidUUID = errors.New("invalid uuid format")
+var ErrInvalidAmount = errors.New("invalid amount")
+var ErrInvalidBody = errors.New("invalid body")
+var ErrInvalidIdempotencyKey = errors.New("invalid idempotency key")
 
 func respondJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -25,14 +28,26 @@ type errorBody struct {
 }
 
 func respondError(w http.ResponseWriter, r *http.Request, err error) {
-	logger := middleware.FromContext(r.Context())
+	logger := logging.FromContext(r.Context())
 
 	switch {
 	case errors.Is(err, ErrInvalidUUID):
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 
+	case errors.Is(err, ErrInvalidIdempotencyKey):
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+
 	case errors.Is(err, domain.ErrAccountNotFound):
 		writeError(w, http.StatusNotFound, "account_not_found", err.Error())
+
+	case errors.Is(err, ErrInvalidAmount) || errors.Is(err, ErrInvalidBody):
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+
+	case errors.Is(err, domain.ErrNotEnoughMoney):
+		writeError(w, http.StatusConflict, "insufficient_funds", err.Error())
+
+	case errors.Is(err, domain.ErrIdempotencyKeyReuse):
+		writeError(w, http.StatusUnprocessableEntity, "idempotency_key_reuse", err.Error())
 
 	default:
 		logger.Error("internal error", "error", err)

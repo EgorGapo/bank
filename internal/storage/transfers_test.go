@@ -70,6 +70,17 @@ func accountBalance(t *testing.T, s *Postgres, accountID string) int64 {
 	return balance
 }
 
+func transferStatus(t *testing.T, s *Postgres, ID string) string {
+	t.Helper()
+	var status string
+	err := s.db.QueryRow(context.Background(),
+		`SELECT status FROM transfers WHERE id = $1`, ID).Scan(&status)
+	if err != nil {
+		t.Fatalf("read status: %v", err)
+	}
+	return status
+}
+
 func TestDeposit(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()
@@ -228,4 +239,165 @@ func TestDeposit(t *testing.T) {
 
 	})
 
+}
+
+func TestWithdraw(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	t.Run("success", func(t *testing.T) {
+		acc := createTestAccount(t, s)
+		depositID := uuid.NewString()
+		keyDeposit := uuid.NewString()
+		_, err := s.Deposit(ctx, 500, depositID, acc.ID, keyDeposit)
+		if err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		withdrawID := uuid.NewString()
+		keyWithdraw := uuid.NewString()
+		trWithdraw, err := s.Withdraw(ctx, 200, withdrawID, acc.ID, keyWithdraw)
+		if err != nil {
+			t.Fatalf("withdraw: %v", err)
+		}
+
+		if trWithdraw.Status != domain.StatusCompleted {
+			t.Error("Invalid status")
+		}
+		if trWithdraw.ID != withdrawID {
+			t.Errorf("invalid id, have %v, want %v", trWithdraw.ID, withdrawID)
+		}
+
+		if trWithdraw.CompletedAt == nil {
+			t.Error("completed_at is nil, want set")
+		}
+		if got := accountBalance(t, s, acc.ID); got != 300 {
+			t.Errorf("account balance: got %d, want 300", got)
+		}
+
+		// Проводка снятия: ровно одна, сумма СО ЗНАКОМ МИНУС, balance_after после списания.
+		var entries int
+		var ledgerAmount, balanceAfter int64
+		err = s.db.QueryRow(ctx,
+			`SELECT count(*), max(amount), max(balance_after) FROM ledger_entries WHERE transfer_id = $1`,
+			withdrawID).Scan(&entries, &ledgerAmount, &balanceAfter)
+		if err != nil {
+			t.Fatalf("read ledger: %v", err)
+		}
+		if entries != 1 {
+			t.Errorf("ledger entries: got %d, want 1", entries)
+		}
+		if ledgerAmount != -200 {
+			t.Errorf("ledger amount: got %d, want -200", ledgerAmount)
+		}
+		if balanceAfter != 300 {
+			t.Errorf("balance_after: got %d, want 300", balanceAfter)
+		}
+	})
+
+	t.Run("retry with same key returns same transfer", func(t *testing.T) {
+		acc := createTestAccount(t, s)
+		if _, err := s.Deposit(ctx, 500, uuid.NewString(), acc.ID, uuid.NewString()); err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		key := uuid.NewString()
+
+		first, err := s.Withdraw(ctx, 200, uuid.NewString(), acc.ID, key)
+		if err != nil {
+			t.Fatalf("first withdraw: %v", err)
+		}
+		second, err := s.Withdraw(ctx, 200, uuid.NewString(), acc.ID, key)
+		if err != nil {
+			t.Fatalf("retry withdraw: %v", err)
+		}
+
+		if second.ID != first.ID {
+			t.Errorf("retry returned different transfer: got %s, want %s", second.ID, first.ID)
+		}
+
+		if got := accountBalance(t, s, acc.ID); got != 300 {
+			t.Errorf("balance after retry: got %d, want 300", got)
+		}
+	})
+
+	t.Run("reuse deposit key in withdraw returns error", func(t *testing.T) {
+		acc := createTestAccount(t, s)
+		key := uuid.NewString()
+		if _, err := s.Deposit(ctx, 300, uuid.NewString(), acc.ID, key); err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+
+		_, err := s.Withdraw(ctx, 300, uuid.NewString(), acc.ID, key)
+		if !errors.Is(err, domain.ErrIdempotencyKeyReuse) {
+			t.Errorf("want ErrIdempotencyKeyReuse, got %v", err)
+		}
+		if got := accountBalance(t, s, acc.ID); got != 300 {
+			t.Errorf("balance: got %d, want 300", got)
+		}
+	})
+
+	t.Run("1000 thieves", func(t *testing.T) {
+		acc := createTestAccount(t, s)
+		depositID := uuid.NewString()
+		keyDeposit := uuid.NewString()
+		_, err := s.Deposit(ctx, 500, depositID, acc.ID, keyDeposit)
+		if err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		wg := &sync.WaitGroup{}
+		errChan := make(chan error, 1000)
+		transfers := make(chan string, 1000)
+		for range 1000 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				withdrawID := uuid.NewString()
+				keyWithdraw := uuid.NewString()
+				_, err := s.Withdraw(ctx, 1, withdrawID, acc.ID, keyWithdraw)
+				if err != nil {
+					errChan <- err
+					if errors.Is(err, domain.ErrNotEnoughMoney) {
+						transfers <- withdrawID
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		close(errChan)
+		close(transfers)
+		counter := 0
+		for err := range errChan {
+			counter++
+			if !errors.Is(err, domain.ErrNotEnoughMoney) {
+				t.Errorf("should be ErrNotEnoughMoney error, got %v: ", err)
+			}
+		}
+		if counter != 500 {
+			t.Errorf("want 500, got %v", counter)
+		}
+		counter = 0
+		for tr := range transfers {
+			counter++
+			if got := transferStatus(t, s, tr); got != domain.StatusFailed {
+				t.Errorf("should be StatusFailed, got %v: ", got)
+			}
+		}
+		if counter != 500 {
+			t.Errorf("want 500, got %v", counter)
+		}
+
+		if got := accountBalance(t, s, acc.ID); got != 0 {
+			t.Errorf("account balance: got %d, want 0", got)
+		}
+
+		var ledgerSum int64
+		err = s.db.QueryRow(ctx,
+			`SELECT COALESCE(SUM(amount), -1) FROM ledger_entries WHERE account_id = $1`,
+			acc.ID).Scan(&ledgerSum)
+		if err != nil {
+			t.Fatalf("read ledger sum: %v", err)
+		}
+		if ledgerSum != 0 {
+			t.Errorf("ledger sum: got %d, want 0 (+500 deposit, -500 withdrawals)", ledgerSum)
+		}
+	})
 }

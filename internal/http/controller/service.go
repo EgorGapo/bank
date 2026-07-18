@@ -10,6 +10,8 @@ import (
 type Bank interface {
 	CreateAccount(ctx context.Context) (*domain.Account, error)
 	GetAccount(ctx context.Context, id string) (*domain.Account, error)
+	Deposit(ctx context.Context, accountID string, amount int64, idempotencyKey string) (*domain.Transfer, error)
+	Withdraw(ctx context.Context, accountID string, amount int64, idempotencyKey string) (*domain.Transfer, error)
 }
 
 type Implementation struct {

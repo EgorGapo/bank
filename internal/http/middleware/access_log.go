@@ -3,6 +3,8 @@ package middleware
 import (
 	"net/http"
 	"time"
+
+	"github.com/EgorGapo/bank/internal/logging"
 )
 
 type responseRecorder struct {
@@ -23,7 +25,7 @@ func AccessLog(h http.Handler) http.Handler {
 		}
 		before := time.Now()
 		h.ServeHTTP(rec, r)
-		logger := FromContext(r.Context())
+		logger := logging.FromContext(r.Context())
 		logger.Info("http request",
 			"method", r.Method,
 			"path", r.URL.Path,

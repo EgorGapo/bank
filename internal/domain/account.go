@@ -17,7 +17,7 @@ const (
 
 var ErrAccountNotFound = errors.New("account not found")
 var ErrIdempotencyKeyReuse = errors.New("reuse of idempotency key")
-var ErrNotEnoughMoney = errors.New("not enough money in the account")
+var ErrNotEnoughMoney = errors.New("not enough money on the account")
 
 type Account struct {
 	ID        string
