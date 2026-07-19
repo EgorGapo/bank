@@ -11,6 +11,7 @@ const (
 	StatusFrozen    = "frozen"
 	TypeDeposit     = "deposit"
 	TypeWithdraw    = "withdraw"
+	TypeTransfer    = "transfer"
 	StatusCompleted = "completed"
 	StatusFailed    = "failed"
 )
