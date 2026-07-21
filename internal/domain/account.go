@@ -41,10 +41,16 @@ type Transfer struct {
 }
 
 type LedgerEntry struct {
-	ID           string
+	ID           int64
 	TransferID   string
 	AccountID    string
 	Amount       int64
 	BalanceAfter int64
 	CreatedAt    time.Time
+}
+
+type HistoryPage struct {
+	Entries    []LedgerEntry
+	NextCursor int64
+	HasMore    bool
 }

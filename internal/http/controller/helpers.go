@@ -13,6 +13,9 @@ var ErrInvalidUUID = errors.New("invalid uuid format")
 var ErrInvalidAmount = errors.New("invalid amount")
 var ErrInvalidBody = errors.New("invalid body")
 var ErrInvalidIdempotencyKey = errors.New("invalid idempotency key")
+var ErrSameTransferAccount = errors.New("same transfer account")
+var ErrInvalidLimitFormat = errors.New("wrong limit format")
+var ErrInvalidCursorFormat = errors.New("wrong cursor format")
 
 func respondJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -40,11 +43,13 @@ func respondError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, domain.ErrAccountNotFound):
 		writeError(w, http.StatusNotFound, "account_not_found", err.Error())
 
-	case errors.Is(err, ErrInvalidAmount) || errors.Is(err, ErrInvalidBody):
+	case errors.Is(err, ErrInvalidAmount) || errors.Is(err, ErrInvalidBody) ||
+		errors.Is(err, ErrSameTransferAccount) ||
+		errors.Is(err, ErrInvalidLimitFormat) || errors.Is(err, ErrInvalidCursorFormat):
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 
 	case errors.Is(err, domain.ErrNotEnoughMoney):
-		writeError(w, http.StatusConflict, "insufficient_funds", err.Error())
+		writeError(w, http.StatusUnprocessableEntity, "insufficient_funds", err.Error())
 
 	case errors.Is(err, domain.ErrIdempotencyKeyReuse):
 		writeError(w, http.StatusUnprocessableEntity, "idempotency_key_reuse", err.Error())

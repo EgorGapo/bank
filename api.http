@@ -8,7 +8,7 @@ POST {{base}}/accounts
 
 ### 2. депозит 500
 # @name dep
-POST {{base}}/accounts/{{acc.response.body.id}}/deposit
+POST {{base}}/accounts/{{"acc.response.body.id"}}/deposit
 Idempotency-Key: {{$guid}}
 Content-Type: application/json
 
@@ -44,3 +44,40 @@ Content-Type: application/json
 
 ### 7. проверить баланс
 GET {{base}}/accounts/{{acc.response.body.id}}
+
+### Transfer
+### создать счёт A
+# @name accA
+POST {{base}}/accounts
+
+### создать счёт B
+# @name accB
+POST {{base}}/accounts
+
+### пополнить A на 1000
+POST {{base}}/accounts/{{accA.response.body.id}}/deposit
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{"amount": 1000}
+
+### перевод A → B на 500
+POST {{base}}/accounts/transfers
+Idempotency-Key: {{$guid}}
+Content-Type: application/json
+
+{
+  "from": "{{accA.response.body.id}}",
+  "to": "{{accB.response.body.id}}",
+  "amount": 500
+}
+
+###
+GET {{base}}/accounts/{{accA.response.body.id}}
+
+### история, страница 1
+# @name hist1
+GET {{base}}/accounts/{{accA.response.body.id}}/history?limit=3
+
+### история, страница 2 — курсор из ответа страницы 1
+GET {{base}}/accounts/{{accA.response.body.id}}/history?limit=20&cursor={{hist1.response.body.next_cursor}}
