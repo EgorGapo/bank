@@ -17,6 +17,14 @@ var ErrSameTransferAccount = errors.New("same transfer account")
 var ErrInvalidLimitFormat = errors.New("wrong limit format")
 var ErrInvalidCursorFormat = errors.New("wrong cursor format")
 
+const (
+	codeInvalidRequest      = "invalid_request"
+	codeAccountNotFound     = "account_not_found"
+	codeInsufficientFunds   = "insufficient_funds"
+	codeIdempotencyKeyReuse = "idempotency_key_reuse"
+	codeInternalError       = "internal_error"
+)
+
 func respondJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -35,28 +43,28 @@ func respondError(w http.ResponseWriter, r *http.Request, err error) {
 
 	switch {
 	case errors.Is(err, ErrInvalidUUID):
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(w, http.StatusBadRequest, codeInvalidRequest, err.Error())
 
 	case errors.Is(err, ErrInvalidIdempotencyKey):
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(w, http.StatusBadRequest, codeInvalidRequest, err.Error())
 
 	case errors.Is(err, domain.ErrAccountNotFound):
-		writeError(w, http.StatusNotFound, "account_not_found", err.Error())
+		writeError(w, http.StatusNotFound, codeAccountNotFound, err.Error())
 
 	case errors.Is(err, ErrInvalidAmount) || errors.Is(err, ErrInvalidBody) ||
 		errors.Is(err, ErrSameTransferAccount) ||
 		errors.Is(err, ErrInvalidLimitFormat) || errors.Is(err, ErrInvalidCursorFormat):
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(w, http.StatusBadRequest, codeInvalidRequest, err.Error())
 
 	case errors.Is(err, domain.ErrNotEnoughMoney):
-		writeError(w, http.StatusUnprocessableEntity, "insufficient_funds", err.Error())
+		writeError(w, http.StatusUnprocessableEntity, codeInsufficientFunds, err.Error())
 
 	case errors.Is(err, domain.ErrIdempotencyKeyReuse):
-		writeError(w, http.StatusUnprocessableEntity, "idempotency_key_reuse", err.Error())
+		writeError(w, http.StatusUnprocessableEntity, codeIdempotencyKeyReuse, err.Error())
 
 	default:
 		logger.Error("internal error", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		writeError(w, http.StatusInternalServerError, codeInternalError, "internal server error")
 	}
 }
 

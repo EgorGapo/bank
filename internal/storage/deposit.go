@@ -39,11 +39,16 @@ func (s *Postgres) Deposit(ctx context.Context, amount int64, transferID string,
 	if _, err := tx.Exec(ctx, queryInsertLedgerEntry, transferID, toAccountId, amount, newBalance); err != nil {
 		return nil, fmt.Errorf("deposit: %w", err)
 	}
-	if err := tx.QueryRow(ctx, queryCompleteTransfer, domain.StatusCompleted, transferID).
-		Scan(&ans.ID, &ans.IdempotencyKey, &ans.FromAccountID, &ans.ToAccountID, &ans.Amount, &ans.Status,
-			&ans.Type, &ans.CreatedAt, &ans.CompletedAt); err != nil {
+	ans, err = s.completeTransfer(ctx, tx, transferID)
+	if err != nil {
 		return nil, fmt.Errorf("deposit: %w", err)
 	}
+
+	eventTo := buildOutboxEvent(*ans, toAccountId)
+	if err := s.insertOutboxEvent(ctx, tx, eventTo); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("deposit: %w", err)
 	}

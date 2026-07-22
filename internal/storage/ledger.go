@@ -7,13 +7,6 @@ import (
 	"github.com/EgorGapo/bank/internal/domain"
 )
 
-const queryLdgerHistory = `
-	SELECT id, transfer_id, account_id, amount, balance_after, created_at
-	FROM ledger_entries
-	WHERE account_id = $1 AND id < $2
-	ORDER BY id DESC
-	LIMIT $3`
-
 func (s *Postgres) GetHistory(ctx context.Context, accountID string, cursor int64, limit int64) ([]domain.LedgerEntry, error) {
 	rows, err := s.db.Query(ctx, queryLdgerHistory, accountID, cursor, limit)
 	if err != nil {

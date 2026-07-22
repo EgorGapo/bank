@@ -36,21 +36,27 @@ func (s *Postgres) Withdraw(ctx context.Context, amount int64, transferID string
 	if newBalance, err = s.debitAccount(ctx, tx, fromAccountID, amount); err != nil {
 		if isPgError(err, pgCheckViolation) {
 			_ = tx.Rollback(ctx)
-			if _, err := s.db.Exec(ctx, queryCancelTransfer, domain.StatusFailed, transferID); err != nil {
+			if err := s.markTransferFailed(ctx, transferID, domain.ErrCodeInsufficientFunds); err != nil {
 				return nil, err
 			}
 			return nil, domain.ErrNotEnoughMoney
+
 		}
 		return nil, fmt.Errorf("withdraw: %w", err)
 	}
 	if _, err := tx.Exec(ctx, queryInsertLedgerEntry, transferID, fromAccountID, -amount, newBalance); err != nil {
 		return nil, fmt.Errorf("withdraw: %w", err)
 	}
-	if err := tx.QueryRow(ctx, queryCompleteTransfer, domain.StatusCompleted, transferID).
-		Scan(&ans.ID, &ans.IdempotencyKey, &ans.FromAccountID, &ans.ToAccountID, &ans.Amount, &ans.Status,
-			&ans.Type, &ans.CreatedAt, &ans.CompletedAt); err != nil {
+	ans, err = s.completeTransfer(ctx, tx, transferID)
+	if err != nil {
 		return nil, fmt.Errorf("withdraw: %w", err)
 	}
+
+	eventFrom := buildOutboxEvent(*ans, fromAccountID)
+	if err := s.insertOutboxEvent(ctx, tx, eventFrom); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("withdraw: %w", err)
 	}

@@ -14,6 +14,8 @@ const (
 	TypeTransfer    = "transfer"
 	StatusCompleted = "completed"
 	StatusFailed    = "failed"
+
+	ErrCodeInsufficientFunds = "insufficient_funds"
 )
 
 var ErrAccountNotFound = errors.New("account not found")

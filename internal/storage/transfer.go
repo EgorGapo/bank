@@ -35,34 +35,25 @@ func (s *Postgres) Transfer(ctx context.Context, amount int64, transferID string
 	var toBalance int64
 	var fromBalance int64
 
-	if toAccountId > fromAccountID {
-		if fromBalance, err = s.debitAccount(ctx, tx, fromAccountID, amount); err != nil {
-			if isPgError(err, pgCheckViolation) {
-				_ = tx.Rollback(ctx)
-				if _, err := s.db.Exec(ctx, queryCancelTransfer, domain.StatusFailed, transferID); err != nil {
-					return nil, err
-				}
-				return nil, domain.ErrNotEnoughMoney
-			}
-			return nil, fmt.Errorf("transfer: %w", err)
-		}
-		if toBalance, err = s.creditAccount(ctx, tx, toAccountId, amount); err != nil {
-			return nil, fmt.Errorf("transfer: %w", err)
+	if fromAccountID < toAccountId {
+		if fromBalance, err = s.debitAccount(ctx, tx, fromAccountID, amount); err == nil {
+			toBalance, err = s.creditAccount(ctx, tx, toAccountId, amount)
 		}
 	} else {
-		if toBalance, err = s.creditAccount(ctx, tx, toAccountId, amount); err != nil {
-			return nil, fmt.Errorf("transfer: %w", err)
+		if toBalance, err = s.creditAccount(ctx, tx, toAccountId, amount); err == nil {
+			fromBalance, err = s.debitAccount(ctx, tx, fromAccountID, amount)
 		}
-		if fromBalance, err = s.debitAccount(ctx, tx, fromAccountID, amount); err != nil {
-			if isPgError(err, pgCheckViolation) {
-				_ = tx.Rollback(ctx)
-				if _, err := s.db.Exec(ctx, queryCancelTransfer, domain.StatusFailed, transferID); err != nil {
-					return nil, err
-				}
-				return nil, domain.ErrNotEnoughMoney
+	}
+	if err != nil {
+		if isPgConstraintViolation(err, pgCheckViolation, constraintBalanceNonNegative) {
+			_ = tx.Rollback(ctx)
+			if mErr := s.markTransferFailed(ctx, transferID, domain.ErrCodeInsufficientFunds); mErr != nil {
+				return nil, mErr
 			}
-			return nil, fmt.Errorf("transfer: %w", err)
+
+			return nil, domain.ErrNotEnoughMoney
 		}
+		return nil, fmt.Errorf("transfer: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, queryInsertLedgerEntry, transferID, toAccountId, amount, toBalance); err != nil {
@@ -72,11 +63,20 @@ func (s *Postgres) Transfer(ctx context.Context, amount int64, transferID string
 		return nil, fmt.Errorf("transfer: %w", err)
 	}
 
-	if err := tx.QueryRow(ctx, queryCompleteTransfer, domain.StatusCompleted, transferID).
-		Scan(&ans.ID, &ans.IdempotencyKey, &ans.FromAccountID, &ans.ToAccountID, &ans.Amount, &ans.Status,
-			&ans.Type, &ans.CreatedAt, &ans.CompletedAt); err != nil {
+	ans, err = s.completeTransfer(ctx, tx, transferID)
+	if err != nil {
 		return nil, fmt.Errorf("transfer: %w", err)
 	}
+
+	eventTo := buildOutboxEvent(*ans, toAccountId)
+	eventFrom := buildOutboxEvent(*ans, fromAccountID)
+	if err := s.insertOutboxEvent(ctx, tx, eventTo); err != nil {
+		return nil, fmt.Errorf("transfer: %w", err)
+	}
+	if err := s.insertOutboxEvent(ctx, tx, eventFrom); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("transfer: %w", err)
 	}
