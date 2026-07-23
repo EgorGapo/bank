@@ -16,6 +16,8 @@ const (
 	StatusFailed    = "failed"
 
 	ErrCodeInsufficientFunds = "insufficient_funds"
+
+	TopicLedgerOperations = "ledger.operations"
 )
 
 var ErrAccountNotFound = errors.New("account not found")
@@ -55,4 +57,23 @@ type HistoryPage struct {
 	Entries    []LedgerEntry
 	NextCursor int64
 	HasMore    bool
+}
+
+type OperationEvent struct {
+	EventID       string    `json:"event_id"`
+	Type          string    `json:"type"`
+	TransferID    string    `json:"transfer_id"`
+	FromAccountID *string   `json:"from_account_id,omitempty"`
+	ToAccountID   *string   `json:"to_account_id,omitempty"`
+	Amount        int64     `json:"amount"`
+	Status        string    `json:"status"`
+	OccurredAt    time.Time `json:"occurred_at"`
+}
+
+type OutboxEvent struct {
+	ID        string
+	Topic     string
+	Key       string
+	Payload   []byte
+	CreatedAt time.Time
 }

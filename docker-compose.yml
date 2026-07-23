@@ -1,20 +1,70 @@
 services:
   postgres:
-    image: postgres:16-alpine
-    container_name: mini-bank
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    image: postgres:16-alpine        # образ:тег. alpine — лёгкий вариант. Тег фиксируй (не latest) — воспроизводимость.
+    container_name: mini-bank         # имя контейнера в `docker ps`. Необязательно; без него docker сгенерит.
+    environment:                      # переменные внутри контейнера. ${...} подставляются из .env.
+      POSTGRES_USER: ${POSTGRES_USER}       # эти три — спец-переменные образа postgres: он сам создаст
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD} # пользователя, пароль и базу при ПЕРВОМ старте (пустой volume).
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "${POSTGRES_PORT}:5432"       # "ХОСТ:КОНТЕЙНЕР". Слева — порт на твоей машине, справа — внутри контейнера.
+                                      # Нужно ТОЛЬКО для доступа с хоста. Контейнеры в сети ходят по 5432 напрямую.
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data  # именованный том: данные переживают пересоздание контейнера.
+                                                # Без него `docker compose down` + up = пустая база.
+    healthcheck:                      # как docker понимает, что сервис ГОТОВ (не просто «запущен»).
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]  # команда: 0 = здоров.
+      interval: 5s                    # как часто проверять
+      timeout: 5s                     # сколько ждать ответа
+      retries: 5                      # сколько неудач подряд до статуса unhealthy
+
+  kafka:
+    image: apache/kafka:${KAFKA_VERSION}
+    container_name: mini-bank-kafka
+    ports:
+      - "${KAFKA_HOST_PORT}:29092"    # проброс наружу ТОЛЬКО HOST-листенера — для `make run` с хоста.
+    environment:
+      # --- KRaft: Kafka без Zookeeper. Один узел совмещает роли брокера и контроллера. ---
+      KAFKA_NODE_ID: 1                              # id узла в кластере (у нас он один)
+      KAFKA_PROCESS_ROLES: broker,controller        # этот узел — и брокер (данные), и контроллер (координация)
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093   # кто голосует за лидера контроллера: узел 1 по адресу kafka:9093
+      # --- ЛИСТЕНЕРЫ — самое важное. Kafka сообщает клиенту адрес, по которому к ней идти. ---
+      # localhost внутри контейнера = сам контейнер, поэтому нужны РАЗНЫЕ адреса для разных клиентов:
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,HOST://:29092  # на каких портах Kafka СЛУШАЕТ
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,HOST://localhost:${KAFKA_HOST_PORT}  # какой адрес ОТДАЁТ клиенту:
+                                      #   INTERNAL: kafka:9092 — для контейнеров в сети compose (UI, api в docker)
+                                      #   HOST: localhost:port — для процессов на хосте (make run)
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT  # без TLS (локально ок)
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL     # по какому листенеру брокеры общаются между собой
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER    # какой листенер — для контроллера
+      # --- boilerplate: копируй, не зубри. single-node → всё в 1 реплику (в проде было бы 3). ---
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1      # реплик у топика оффсетов
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0      # 0 — быстрее стартуют consumer-группы (для локалки)
+    volumes:
+      - kafka-data:/var/lib/kafka/data               # логи Kafka переживают рестарт
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
       timeout: 5s
       retries: 5
 
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: mini-bank-kafka-ui
+    ports:
+      - "${KAFKA_UI_PORT}:8080"        # веб-морда: http://localhost:${KAFKA_UI_PORT}
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local     # имя кластера в UI (можно любое)
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092  # UI — контейнер в сети → идёт по INTERNAL-адресу kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"   # разрешить настраивать кластер из самой UI
+    depends_on:
+      kafka:
+        condition: service_healthy     # стартовать UI только когда Kafka ЗДОРОВА (не просто запущена).
+                                       # service_healthy требует healthcheck у kafka — он выше.
+
+# именованные тома. Живут отдельно от контейнеров; удаляются только `docker compose down -v`.
 volumes:
   postgres-data:
+  kafka-data:

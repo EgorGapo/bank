@@ -13,6 +13,8 @@ import (
 	"github.com/EgorGapo/bank/internal/config"
 	"github.com/EgorGapo/bank/internal/http/controller"
 	"github.com/EgorGapo/bank/internal/http/route"
+	"github.com/EgorGapo/bank/internal/kafka"
+	"github.com/EgorGapo/bank/internal/relay"
 	"github.com/EgorGapo/bank/internal/storage"
 	"github.com/EgorGapo/bank/internal/usecases"
 	"github.com/go-chi/chi/v5"
@@ -43,6 +45,16 @@ func Run(cfg *config.Config, logger *slog.Logger) error {
 	store := storage.NewPostgres(pool, logger)
 	usecase := usecases.NewBank(store, logger)
 	ctrl := controller.New(logger, usecase)
+
+	// Kafka-продюсер + relay (читает outbox и шлёт в Kafka фоном).
+	producer, err := kafka.NewProducer(cfg.Kafka.Brokers)
+	if err != nil {
+		return fmt.Errorf("create kafka producer: %w", err)
+	}
+	defer producer.Close()
+
+	outboxRelay := relay.NewRelay(producer, store, logger)
+	outboxRelay.StartRelayEvent(ctx, cfg.Kafka.RelayWorkers, cfg.Kafka.RelayPeriod)
 
 	r := chi.NewRouter()
 	route.Setup(r, ctrl, logger)

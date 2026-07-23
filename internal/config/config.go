@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
@@ -9,6 +10,13 @@ import (
 
 type Config struct {
 	Postgres Postgres
+	Kafka    Kafka
+}
+
+type Kafka struct {
+	Brokers      []string      `env:"KAFKA_BROKERS"  envSeparator:"," envDefault:"localhost:29092"`
+	RelayPeriod  time.Duration `env:"RELAY_PERIOD"   envDefault:"1s"`
+	RelayWorkers int           `env:"RELAY_WORKERS"   envDefault:"4"`
 }
 
 type Postgres struct {

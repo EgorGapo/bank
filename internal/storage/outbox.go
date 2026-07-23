@@ -14,26 +14,21 @@ import (
 const queryInsertInOutbox = `
 	INSERT INTO outbox (id, topic, key, payload) VALUES ($1, $2, $3, $4)`
 
-type OperationEvent struct {
-	EventID       string    `json:"event_id"`
-	Type          string    `json:"type"`
-	TransferID    string    `json:"transfer_id"`
-	FromAccountID *string   `json:"from_account_id,omitempty"`
-	ToAccountID   *string   `json:"to_account_id,omitempty"`
-	Amount        int64     `json:"amount"`
-	Status        string    `json:"status"`
-	OccurredAt    time.Time `json:"occurred_at"`
-}
+const queryFetchUnsentEvents = `
+	SELECT id, topic, key, payload, created_at
+	FROM outbox
+	WHERE sent_at IS NULL
+	ORDER BY created_at
+	LIMIT $1
+	FOR UPDATE SKIP LOCKED
+	`
 
-type OutboxEvent struct {
-	ID      string
-	Topic   string
-	Key     string
-	Payload []byte
-}
+const queryMarkSent = `
+	UPDATE outbox SET sent_at = now() WHERE id = ANY($1)
+	`
 
-func buildOutboxEvent(transfer domain.Transfer, accountID string) OutboxEvent {
-	operation := OperationEvent{
+func buildOutboxEvent(transfer domain.Transfer, accountID string) domain.OutboxEvent {
+	operation := domain.OperationEvent{
 		EventID:       uuid.NewString(),
 		Type:          transfer.Type,
 		TransferID:    transfer.ID,
@@ -45,7 +40,7 @@ func buildOutboxEvent(transfer domain.Transfer, accountID string) OutboxEvent {
 	}
 	payload, _ := json.Marshal(operation)
 
-	event := OutboxEvent{
+	event := domain.OutboxEvent{
 		ID:      operation.EventID,
 		Topic:   domain.TopicLedgerOperations,
 		Key:     accountID,
@@ -55,10 +50,39 @@ func buildOutboxEvent(transfer domain.Transfer, accountID string) OutboxEvent {
 
 }
 
-func (s *Postgres) insertOutboxEvent(ctx context.Context, tx pgx.Tx, event OutboxEvent) error {
+func (s *Postgres) insertOutboxEvent(ctx context.Context, tx pgx.Tx, event domain.OutboxEvent) error {
 	_, err := tx.Exec(ctx, queryInsertInOutbox, event.ID, event.Topic, event.Key, event.Payload)
 	if err != nil {
 		return fmt.Errorf("insertOutboxEvent: %w", err)
+	}
+	return nil
+}
+
+func (s *Postgres) FetchUnsentOutbox(ctx context.Context, tx pgx.Tx, limit int) ([]domain.OutboxEvent, error) {
+	rows, err := tx.Query(ctx, queryFetchUnsentEvents, limit)
+	if err != nil {
+		return nil, fmt.Errorf("fetch unsent outbox: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []domain.OutboxEvent
+	for rows.Next() {
+		var e domain.OutboxEvent
+		if err := rows.Scan(&e.ID, &e.Topic, &e.Key, &e.Payload, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("fetch unsent outbox: %w", err)
+		}
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("fetch unsent outbox: %w", err)
+	}
+
+	return entries, nil
+}
+
+func (s *Postgres) MarkOutboxSent(ctx context.Context, tx pgx.Tx, ids []string) error {
+	if _, err := tx.Exec(ctx, queryMarkSent, ids); err != nil {
+		return fmt.Errorf("mark outbox sent: %w", err)
 	}
 	return nil
 }
