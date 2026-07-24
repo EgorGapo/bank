@@ -7,7 +7,7 @@ import (
 	"github.com/EgorGapo/bank/internal/domain"
 )
 
-func (s *Postgres) GetHistory(ctx context.Context, accountID string, cursor int64, limit int64) ([]domain.LedgerEntry, error) {
+func (s *postgres) GetHistory(ctx context.Context, accountID string, cursor int64, limit int64) ([]domain.LedgerEntry, error) {
 	rows, err := s.db.Query(ctx, queryLdgerHistory, accountID, cursor, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get history: %w", err)

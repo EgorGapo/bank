@@ -16,14 +16,14 @@ const pgCheckViolation = "23514"
 
 const constraintBalanceNonNegative = "accounts_balance_non_negative"
 
-func (s *Postgres) creditAccount(ctx context.Context, tx pgx.Tx, accountID string, amount int64) (int64, error) {
+func (s *postgres) creditAccount(ctx context.Context, tx pgx.Tx, accountID string, amount int64) (int64, error) {
 	var newBalance int64
 	if err := tx.QueryRow(ctx, queryAddToBalance, amount, accountID).Scan(&newBalance); err != nil {
 		return 0, err
 	}
 	return newBalance, nil
 }
-func (s *Postgres) debitAccount(ctx context.Context, tx pgx.Tx, accountID string, amount int64) (int64, error) {
+func (s *postgres) debitAccount(ctx context.Context, tx pgx.Tx, accountID string, amount int64) (int64, error) {
 	var newBalance int64
 	if err := tx.QueryRow(ctx, querySubFromBalance, amount, accountID).Scan(&newBalance); err != nil {
 		return 0, err
@@ -32,13 +32,13 @@ func (s *Postgres) debitAccount(ctx context.Context, tx pgx.Tx, accountID string
 
 }
 
-func (s *Postgres) markTransferFailed(ctx context.Context, transferID string, errcode string) error {
+func (s *postgres) markTransferFailed(ctx context.Context, transferID string, errcode string) error {
 	if _, err := s.db.Exec(ctx, queryCancelTransfer, domain.StatusFailed, transferID, errcode); err != nil {
 		return fmt.Errorf("mark transfer failed: %w", err)
 	}
 	return nil
 }
-func (s *Postgres) completeTransfer(ctx context.Context, tx pgx.Tx, transferID string) (*domain.Transfer, error) {
+func (s *postgres) completeTransfer(ctx context.Context, tx pgx.Tx, transferID string) (*domain.Transfer, error) {
 	t := &domain.Transfer{}
 	err := tx.QueryRow(ctx, queryCompleteTransfer, domain.StatusCompleted, transferID).
 		Scan(&t.ID, &t.IdempotencyKey, &t.FromAccountID, &t.ToAccountID, &t.Amount, &t.Status,

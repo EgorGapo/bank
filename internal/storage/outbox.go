@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/EgorGapo/bank/internal/domain"
 	"github.com/google/uuid"
@@ -36,7 +35,7 @@ func buildOutboxEvent(transfer domain.Transfer, accountID string) domain.OutboxE
 		ToAccountID:   transfer.ToAccountID,
 		Amount:        transfer.Amount,
 		Status:        transfer.Status,
-		OccurredAt:    time.Now(),
+		OccurredAt:    *transfer.CompletedAt,
 	}
 	payload, _ := json.Marshal(operation)
 
@@ -50,7 +49,7 @@ func buildOutboxEvent(transfer domain.Transfer, accountID string) domain.OutboxE
 
 }
 
-func (s *Postgres) insertOutboxEvent(ctx context.Context, tx pgx.Tx, event domain.OutboxEvent) error {
+func (s *postgres) insertOutboxEvent(ctx context.Context, tx pgx.Tx, event domain.OutboxEvent) error {
 	_, err := tx.Exec(ctx, queryInsertInOutbox, event.ID, event.Topic, event.Key, event.Payload)
 	if err != nil {
 		return fmt.Errorf("insertOutboxEvent: %w", err)
@@ -58,7 +57,7 @@ func (s *Postgres) insertOutboxEvent(ctx context.Context, tx pgx.Tx, event domai
 	return nil
 }
 
-func (s *Postgres) FetchUnsentOutbox(ctx context.Context, tx pgx.Tx, limit int) ([]domain.OutboxEvent, error) {
+func (s *postgres) FetchUnsentOutbox(ctx context.Context, tx pgx.Tx, limit int) ([]domain.OutboxEvent, error) {
 	rows, err := tx.Query(ctx, queryFetchUnsentEvents, limit)
 	if err != nil {
 		return nil, fmt.Errorf("fetch unsent outbox: %w", err)
@@ -80,7 +79,7 @@ func (s *Postgres) FetchUnsentOutbox(ctx context.Context, tx pgx.Tx, limit int) 
 	return entries, nil
 }
 
-func (s *Postgres) MarkOutboxSent(ctx context.Context, tx pgx.Tx, ids []string) error {
+func (s *postgres) MarkOutboxSent(ctx context.Context, tx pgx.Tx, ids []string) error {
 	if _, err := tx.Exec(ctx, queryMarkSent, ids); err != nil {
 		return fmt.Errorf("mark outbox sent: %w", err)
 	}

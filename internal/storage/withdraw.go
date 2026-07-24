@@ -7,7 +7,7 @@ import (
 	"github.com/EgorGapo/bank/internal/domain"
 )
 
-func (s *Postgres) Withdraw(ctx context.Context, amount int64, transferID string, fromAccountID string, idempotencyKey string) (*domain.Transfer, error) {
+func (s *postgres) Withdraw(ctx context.Context, amount int64, transferID string, fromAccountID string, idempotencyKey string) (*domain.Transfer, error) {
 	ans := &domain.Transfer{}
 	if _, err := s.db.Exec(ctx, queryInsertTransfer, transferID, idempotencyKey, fromAccountID, nil, amount, domain.TypeWithdraw); err != nil {
 		if isPgError(err, pgFKViolation) {

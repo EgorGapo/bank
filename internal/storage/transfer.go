@@ -7,7 +7,7 @@ import (
 	"github.com/EgorGapo/bank/internal/domain"
 )
 
-func (s *Postgres) Transfer(ctx context.Context, amount int64, transferID string, fromAccountID string, toAccountId string, idempotencyKey string) (*domain.Transfer, error) {
+func (s *postgres) Transfer(ctx context.Context, amount int64, transferID string, fromAccountID string, toAccountId string, idempotencyKey string) (*domain.Transfer, error) {
 	ans := &domain.Transfer{}
 	if _, err := s.db.Exec(ctx, queryInsertTransfer, transferID, idempotencyKey, fromAccountID, toAccountId, amount, domain.TypeTransfer); err != nil {
 		if isPgError(err, pgFKViolation) {

@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type Storage interface {
+type BankStorage interface {
 	CreateAccount(ctx context.Context, account *domain.Account) error
 	GetAccount(ctx context.Context, id string) (*domain.Account, error)
 	Deposit(ctx context.Context, amount int64, transferID string, toAccountId string, idempotencyKey string) (*domain.Transfer, error)
@@ -18,19 +18,19 @@ type Storage interface {
 	GetHistory(ctx context.Context, accountID string, cursor int64, limit int64) ([]domain.LedgerEntry, error)
 }
 
-type Bank struct {
-	storage Storage
+type bank struct {
+	storage BankStorage
 	logger  *slog.Logger
 }
 
-func NewBank(storage Storage, logger *slog.Logger) *Bank {
-	return &Bank{
+func NewBank(storage BankStorage, logger *slog.Logger) *bank {
+	return &bank{
 		storage: storage,
 		logger:  logger,
 	}
 }
 
-func (s *Bank) CreateAccount(ctx context.Context) (*domain.Account, error) {
+func (s *bank) CreateAccount(ctx context.Context) (*domain.Account, error) {
 	acc := &domain.Account{
 		ID:     uuid.NewString(),
 		Status: domain.StatusActive,
@@ -41,11 +41,11 @@ func (s *Bank) CreateAccount(ctx context.Context) (*domain.Account, error) {
 	return acc, nil
 }
 
-func (s *Bank) GetAccount(ctx context.Context, id string) (*domain.Account, error) {
+func (s *bank) GetAccount(ctx context.Context, id string) (*domain.Account, error) {
 	return s.storage.GetAccount(ctx, id)
 }
 
-func (s *Bank) Withdraw(ctx context.Context, accountID string, amount int64, idempotencyKey string) (*domain.Transfer, error) {
+func (s *bank) Withdraw(ctx context.Context, accountID string, amount int64, idempotencyKey string) (*domain.Transfer, error) {
 	transferID := uuid.NewString()
 	tr, err := s.storage.Withdraw(ctx, amount, transferID, accountID, idempotencyKey)
 	if err != nil {
@@ -55,7 +55,7 @@ func (s *Bank) Withdraw(ctx context.Context, accountID string, amount int64, ide
 	return tr, nil
 }
 
-func (s *Bank) Deposit(ctx context.Context, accountID string, amount int64, idempotencyKey string) (*domain.Transfer, error) {
+func (s *bank) Deposit(ctx context.Context, accountID string, amount int64, idempotencyKey string) (*domain.Transfer, error) {
 	transferID := uuid.NewString()
 	tr, err := s.storage.Deposit(ctx, amount, transferID, accountID, idempotencyKey)
 	if err != nil {
@@ -65,7 +65,7 @@ func (s *Bank) Deposit(ctx context.Context, accountID string, amount int64, idem
 	return tr, nil
 }
 
-func (s *Bank) Transfer(ctx context.Context, amount int64, fromAccountID string, toAccountId string, idempotencyKey string) (*domain.Transfer, error) {
+func (s *bank) Transfer(ctx context.Context, amount int64, fromAccountID string, toAccountId string, idempotencyKey string) (*domain.Transfer, error) {
 	transferID := uuid.NewString()
 	tr, err := s.storage.Transfer(ctx, amount, transferID, fromAccountID, toAccountId, idempotencyKey)
 	if err != nil {
@@ -75,7 +75,7 @@ func (s *Bank) Transfer(ctx context.Context, amount int64, fromAccountID string,
 	return tr, nil
 }
 
-func (s *Bank) GetHistory(ctx context.Context, accountID string, cursor int64, limit int64) (domain.HistoryPage, error) {
+func (s *bank) GetHistory(ctx context.Context, accountID string, cursor int64, limit int64) (domain.HistoryPage, error) {
 	h, err := s.storage.GetHistory(ctx, accountID, cursor, limit+1)
 	page := domain.HistoryPage{}
 	if err != nil {

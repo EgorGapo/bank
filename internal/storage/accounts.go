@@ -19,14 +19,14 @@ const querySelectAccount = `
 	FROM accounts
 	WHERE id = $1`
 
-func (s *Postgres) CreateAccount(ctx context.Context, acc *domain.Account) error {
+func (s *postgres) CreateAccount(ctx context.Context, acc *domain.Account) error {
 	if err := s.db.QueryRow(ctx, queryInsertAccount, acc.ID, acc.Status, acc.Balance).Scan(&acc.CreatedAt, &acc.UpdatedAt); err != nil {
 		return fmt.Errorf("insert account: %w", err)
 	}
 	return nil
 }
 
-func (s *Postgres) GetAccount(ctx context.Context, id string) (*domain.Account, error) {
+func (s *postgres) GetAccount(ctx context.Context, id string) (*domain.Account, error) {
 	ans := &domain.Account{}
 	err := s.db.QueryRow(ctx, querySelectAccount, id).Scan(&ans.ID, &ans.Balance, &ans.Status, &ans.CreatedAt, &ans.UpdatedAt)
 	if err != nil {

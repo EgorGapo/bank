@@ -19,7 +19,7 @@ import (
 
 // newTestStorage подключается к локальной базе (make up).
 // Если базы нет — тест пропускается, а не падает.
-func newTestStorage(t *testing.T) *Postgres {
+func newTestStorage(t *testing.T) *postgres {
 	t.Helper()
 	_ = godotenv.Load("../../.env")
 
@@ -46,7 +46,7 @@ func newTestStorage(t *testing.T) *Postgres {
 }
 
 // createTestAccount — фикстура: свежий счёт для теста.
-func createTestAccount(t *testing.T, s *Postgres) *domain.Account {
+func createTestAccount(t *testing.T, s *postgres) *domain.Account {
 	t.Helper()
 	acc := &domain.Account{
 		ID:     uuid.NewString(),
@@ -59,7 +59,7 @@ func createTestAccount(t *testing.T, s *Postgres) *domain.Account {
 }
 
 // accountBalance — прямой взгляд в базу, мимо тестируемого кода.
-func accountBalance(t *testing.T, s *Postgres, accountID string) int64 {
+func accountBalance(t *testing.T, s *postgres, accountID string) int64 {
 	t.Helper()
 	var balance int64
 	err := s.db.QueryRow(context.Background(),
@@ -70,7 +70,7 @@ func accountBalance(t *testing.T, s *Postgres, accountID string) int64 {
 	return balance
 }
 
-func transferStatus(t *testing.T, s *Postgres, ID string) string {
+func transferStatus(t *testing.T, s *postgres, ID string) string {
 	t.Helper()
 	var status string
 	err := s.db.QueryRow(context.Background(),

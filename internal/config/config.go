@@ -15,7 +15,7 @@ type Config struct {
 
 type Kafka struct {
 	Brokers      []string      `env:"KAFKA_BROKERS"  envSeparator:"," envDefault:"localhost:29092"`
-	RelayPeriod  time.Duration `env:"RELAY_PERIOD"   envDefault:"1s"`
+	RelayPeriod  time.Duration `env:"RELAY_PERIOD"   envDefault:"5s"`
 	RelayWorkers int           `env:"RELAY_WORKERS"   envDefault:"4"`
 }
 

@@ -4,6 +4,8 @@ GOLANGCI := ./bin/golangci-lint
 
 run:
 	go run ./cmd/bank
+runN:
+	go run ./cmd/notifier
 
 migrate:
 	go run ./cmd/migrate
