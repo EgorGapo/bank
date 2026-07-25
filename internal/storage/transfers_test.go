@@ -81,6 +81,57 @@ func transferStatus(t *testing.T, s *postgres, ID string) string {
 	return status
 }
 
+// transferErrorCode — error_code операции (NULL → "").
+func transferErrorCode(t *testing.T, s *postgres, ID string) string {
+	t.Helper()
+	var code *string
+	err := s.db.QueryRow(context.Background(),
+		`SELECT error_code FROM transfers WHERE id = $1`, ID).Scan(&code)
+	if err != nil {
+		t.Fatalf("read error_code: %v", err)
+	}
+	if code == nil {
+		return ""
+	}
+	return *code
+}
+
+// ledgerSumByAccount — сумма проводок счёта; должна совпадать с его балансом.
+func ledgerSumByAccount(t *testing.T, s *postgres, accountID string) int64 {
+	t.Helper()
+	var sum int64
+	err := s.db.QueryRow(context.Background(),
+		`SELECT COALESCE(SUM(amount), 0) FROM ledger_entries WHERE account_id = $1`, accountID).Scan(&sum)
+	if err != nil {
+		t.Fatalf("read ledger sum: %v", err)
+	}
+	return sum
+}
+
+// ledgerSumByTransfer — сумма проводок одной операции; для transfer должна быть 0 (double-entry).
+func ledgerSumByTransfer(t *testing.T, s *postgres, transferID string) (count int, sum int64) {
+	t.Helper()
+	err := s.db.QueryRow(context.Background(),
+		`SELECT count(*), COALESCE(SUM(amount), 0) FROM ledger_entries WHERE transfer_id = $1`,
+		transferID).Scan(&count, &sum)
+	if err != nil {
+		t.Fatalf("read ledger by transfer: %v", err)
+	}
+	return count, sum
+}
+
+// ledgerEntryAmount — сумма проводки конкретного счёта в рамках операции.
+func ledgerEntryAmount(t *testing.T, s *postgres, transferID, accountID string) (amount, balanceAfter int64) {
+	t.Helper()
+	err := s.db.QueryRow(context.Background(),
+		`SELECT amount, balance_after FROM ledger_entries WHERE transfer_id = $1 AND account_id = $2`,
+		transferID, accountID).Scan(&amount, &balanceAfter)
+	if err != nil {
+		t.Fatalf("read ledger entry: %v", err)
+	}
+	return amount, balanceAfter
+}
+
 func TestDeposit(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()
@@ -139,7 +190,6 @@ func TestDeposit(t *testing.T) {
 			t.Fatalf("first deposit: %v", err)
 		}
 
-		// Ретрай: тот же ключ и параметры, новый transferID (как сделал бы usecase).
 		second, err := s.Deposit(ctx, 300, uuid.NewString(), acc.ID, key)
 		if err != nil {
 			t.Fatalf("retry deposit: %v", err)
@@ -149,7 +199,6 @@ func TestDeposit(t *testing.T) {
 			t.Errorf("retry returned different transfer: got %s, want %s", second.ID, first.ID)
 		}
 
-		// Главное: деньги не задвоились.
 		if got := accountBalance(t, s, acc.ID); got != 300 {
 			t.Errorf("balance after retry: got %d, want 300", got)
 		}
@@ -274,7 +323,6 @@ func TestWithdraw(t *testing.T) {
 			t.Errorf("account balance: got %d, want 300", got)
 		}
 
-		// Проводка снятия: ровно одна, сумма СО ЗНАКОМ МИНУС, balance_after после списания.
 		var entries int
 		var ledgerAmount, balanceAfter int64
 		err = s.db.QueryRow(ctx,
@@ -400,4 +448,281 @@ func TestWithdraw(t *testing.T) {
 			t.Errorf("ledger sum: got %d, want 0 (+500 deposit, -500 withdrawals)", ledgerSum)
 		}
 	})
+}
+
+func TestTransfer(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	t.Run("success", func(t *testing.T) {
+		acc1 := createTestAccount(t, s)
+		acc2 := createTestAccount(t, s)
+		if _, err := s.Deposit(ctx, 1000, uuid.NewString(), acc1.ID, uuid.NewString()); err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		transferID := uuid.NewString()
+		tr, err := s.Transfer(ctx, 1000, transferID, acc1.ID, acc2.ID, uuid.NewString())
+		if err != nil {
+			t.Fatalf("transfer: %v", err)
+		}
+
+		if tr.Status != domain.StatusCompleted {
+			t.Errorf("status: got %s, want %s", tr.Status, domain.StatusCompleted)
+		}
+		if tr.Type != domain.TypeTransfer {
+			t.Errorf("type: got %s, want %s", tr.Type, domain.TypeTransfer)
+		}
+		if tr.CompletedAt == nil {
+			t.Error("completed_at is nil, want set")
+		}
+
+		balance1 := accountBalance(t, s, acc1.ID)
+		balance2 := accountBalance(t, s, acc2.ID)
+		if balance1 != 0 {
+			t.Errorf("want 0, got %v", balance1)
+		}
+		if balance2 != 1000 {
+			t.Errorf("want 1000, got %v", balance2)
+		}
+		count, sum := ledgerSumByTransfer(t, s, transferID)
+		if count != 2 {
+			t.Errorf("ledger entries: got %d, want 2", count)
+		}
+		if sum != 0 {
+			t.Errorf("ledger sum for transfer: got %d, want 0", sum)
+		}
+
+		// Знаки и balance_after у каждой стороны.
+		fromAmount, fromBalanceAfter := ledgerEntryAmount(t, s, transferID, acc1.ID)
+		if fromAmount != -1000 {
+			t.Errorf("from entry amount: got %d, want -1000", fromAmount)
+		}
+		if fromBalanceAfter != 0 {
+			t.Errorf("from balance_after: got %d, want 0", fromBalanceAfter)
+		}
+		toAmount, toBalanceAfter := ledgerEntryAmount(t, s, transferID, acc2.ID)
+		if toAmount != 1000 {
+			t.Errorf("to entry amount: got %d, want 1000", toAmount)
+		}
+		if toBalanceAfter != 1000 {
+			t.Errorf("to balance_after: got %d, want 1000", toBalanceAfter)
+		}
+	})
+
+	t.Run("not enough money", func(t *testing.T) {
+		acc1 := createTestAccount(t, s)
+		acc2 := createTestAccount(t, s)
+		if _, err := s.Deposit(ctx, 1000, uuid.NewString(), acc1.ID, uuid.NewString()); err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		transferID := uuid.NewString()
+		_, err := s.Transfer(ctx, 1300, transferID, acc1.ID, acc2.ID, uuid.NewString())
+		if err == nil {
+			t.Fatalf("no err")
+		}
+		if !errors.Is(err, domain.ErrNotEnoughMoney) {
+			t.Errorf("want domain.ErrNotEnoughMoney, got %v", err)
+		}
+
+		// Деньги НЕ двигались.
+		if got := accountBalance(t, s, acc1.ID); got != 1000 {
+			t.Errorf("from balance: got %d, want 1000 (unchanged)", got)
+		}
+		if got := accountBalance(t, s, acc2.ID); got != 0 {
+			t.Errorf("to balance: got %d, want 0 (unchanged)", got)
+		}
+
+		if got := transferStatus(t, s, transferID); got != domain.StatusFailed {
+			t.Errorf("status: got %s, want %s", got, domain.StatusFailed)
+		}
+		if got := transferErrorCode(t, s, transferID); got != domain.ErrCodeInsufficientFunds {
+			t.Errorf("error_code: got %q, want %q", got, domain.ErrCodeInsufficientFunds)
+		}
+		if count, _ := ledgerSumByTransfer(t, s, transferID); count != 0 {
+			t.Errorf("ledger entries: got %d, want 0 (nothing posted)", count)
+		}
+	})
+
+	t.Run("retry with same key returns same transfer", func(t *testing.T) {
+		acc1 := createTestAccount(t, s)
+		acc2 := createTestAccount(t, s)
+		if _, err := s.Deposit(ctx, 500, uuid.NewString(), acc1.ID, uuid.NewString()); err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		key := uuid.NewString()
+
+		first, err := s.Transfer(ctx, 200, uuid.NewString(), acc1.ID, acc2.ID, key)
+		if err != nil {
+			t.Fatalf("first transfer: %v", err)
+		}
+		second, err := s.Transfer(ctx, 200, uuid.NewString(), acc1.ID, acc2.ID, key)
+		if err != nil {
+			t.Fatalf("retry transfer: %v", err)
+		}
+
+		if second.ID != first.ID {
+			t.Errorf("retry returned different transfer: got %s, want %s", second.ID, first.ID)
+		}
+		// Деньги не ушли дважды.
+		if got := accountBalance(t, s, acc1.ID); got != 300 {
+			t.Errorf("from balance after retry: got %d, want 300", got)
+		}
+		if got := accountBalance(t, s, acc2.ID); got != 200 {
+			t.Errorf("to balance after retry: got %d, want 200", got)
+		}
+	})
+
+	t.Run("reuse key with different params returns error", func(t *testing.T) {
+		acc1 := createTestAccount(t, s)
+		acc2 := createTestAccount(t, s)
+		if _, err := s.Deposit(ctx, 500, uuid.NewString(), acc1.ID, uuid.NewString()); err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		key := uuid.NewString()
+
+		if _, err := s.Transfer(ctx, 200, uuid.NewString(), acc1.ID, acc2.ID, key); err != nil {
+			t.Fatalf("first transfer: %v", err)
+		}
+		// Тот же ключ, другая сумма.
+		_, err := s.Transfer(ctx, 300, uuid.NewString(), acc1.ID, acc2.ID, key)
+		if !errors.Is(err, domain.ErrIdempotencyKeyReuse) {
+			t.Errorf("want ErrIdempotencyKeyReuse, got %v", err)
+		}
+		if got := accountBalance(t, s, acc1.ID); got != 300 {
+			t.Errorf("from balance: got %d, want 300 (unchanged)", got)
+		}
+	})
+
+	t.Run("account not found", func(t *testing.T) {
+		acc := createTestAccount(t, s)
+		missing := uuid.NewString()
+
+		_, err := s.Transfer(ctx, 100, uuid.NewString(), acc.ID, missing, uuid.NewString())
+		if !errors.Is(err, domain.ErrAccountNotFound) {
+			t.Errorf("unknown to-account: want ErrAccountNotFound, got %v", err)
+		}
+
+		_, err = s.Transfer(ctx, 100, uuid.NewString(), missing, acc.ID, uuid.NewString())
+		if !errors.Is(err, domain.ErrAccountNotFound) {
+			t.Errorf("unknown from-account: want ErrAccountNotFound, got %v", err)
+		}
+	})
+
+	t.Run("1000 free dollars", func(t *testing.T) {
+		acc1 := createTestAccount(t, s)
+		acc2 := createTestAccount(t, s)
+		if _, err := s.Deposit(ctx, 1000, uuid.NewString(), acc1.ID, uuid.NewString()); err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		// Все переводы обязаны пройти: ошибку репортит Wait, а не каждая горутина.
+		g, gctx := errgroup.WithContext(ctx)
+		for range 1000 {
+			g.Go(func() error {
+				_, err := s.Transfer(gctx, 1, uuid.NewString(), acc1.ID, acc2.ID, uuid.NewString())
+				return err
+			})
+		}
+		if err := g.Wait(); err != nil {
+			t.Fatalf("transfer: %v", err)
+		}
+		balance1 := accountBalance(t, s, acc1.ID)
+		balance2 := accountBalance(t, s, acc2.ID)
+		if balance1 != 0 {
+			t.Errorf("want 0, got %v", balance1)
+		}
+		if balance2 != 1000 {
+			t.Errorf("want 1000, got %v", balance2)
+		}
+		// Балансы сходятся с проводками.
+		if got := ledgerSumByAccount(t, s, acc1.ID); got != balance1 {
+			t.Errorf("ledger sum acc1: got %d, want %d (= balance)", got, balance1)
+		}
+		if got := ledgerSumByAccount(t, s, acc2.ID); got != balance2 {
+			t.Errorf("ledger sum acc2: got %d, want %d (= balance)", got, balance2)
+		}
+	})
+
+	t.Run("1000 free dollars from man with no money", func(t *testing.T) {
+		acc1 := createTestAccount(t, s)
+		acc2 := createTestAccount(t, s)
+		if _, err := s.Deposit(ctx, 100, uuid.NewString(), acc1.ID, uuid.NewString()); err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		// Ошибки ожидаемы -> голая Group (без отмены) + считаем исходы.
+		errCh := make(chan error, 1000)
+		var g errgroup.Group
+		for range 1000 {
+			g.Go(func() error {
+				if _, err := s.Transfer(ctx, 10, uuid.NewString(), acc1.ID, acc2.ID, uuid.NewString()); err != nil {
+					errCh <- err
+				}
+				return nil
+			})
+		}
+		_ = g.Wait()
+		close(errCh)
+
+		failed := 0
+		for err := range errCh {
+			failed++
+			if !errors.Is(err, domain.ErrNotEnoughMoney) {
+				t.Errorf("want domain.ErrNotEnoughMoney, got %v", err)
+			}
+		}
+		// Денег хватило ровно на 10 переводов по 10 -> 990 отказов.
+		if failed != 990 {
+			t.Errorf("failed transfers: got %d, want 990", failed)
+		}
+
+		balance1 := accountBalance(t, s, acc1.ID)
+		balance2 := accountBalance(t, s, acc2.ID)
+		if balance1 != 0 {
+			t.Errorf("want 0, got %v", balance1)
+		}
+		if balance2 != 100 {
+			t.Errorf("want 100, got %v", balance2)
+		}
+		if got := ledgerSumByAccount(t, s, acc1.ID); got != balance1 {
+			t.Errorf("ledger sum acc1: got %d, want %d (= balance)", got, balance1)
+		}
+	})
+
+	t.Run("friends 200", func(t *testing.T) {
+		acc1 := createTestAccount(t, s)
+		acc2 := createTestAccount(t, s)
+		if _, err := s.Deposit(ctx, 200, uuid.NewString(), acc1.ID, uuid.NewString()); err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		if _, err := s.Deposit(ctx, 200, uuid.NewString(), acc2.ID, uuid.NewString()); err != nil {
+			t.Fatalf("deposit: %v", err)
+		}
+		var g errgroup.Group
+		for range 200 {
+			g.Go(func() error {
+				_, err := s.Transfer(ctx, 1, uuid.NewString(), acc1.ID, acc2.ID, uuid.NewString())
+				return err
+			})
+			g.Go(func() error {
+				_, err := s.Transfer(ctx, 1, uuid.NewString(), acc2.ID, acc1.ID, uuid.NewString())
+				return err
+			})
+		}
+		if err := g.Wait(); err != nil {
+			t.Errorf("got %v", err)
+		}
+		balance1 := accountBalance(t, s, acc1.ID)
+		balance2 := accountBalance(t, s, acc2.ID)
+		if balance1 != 200 {
+			t.Errorf("want 200, got %v", balance1)
+		}
+		if balance2 != 200 {
+			t.Errorf("want 200, got %v", balance2)
+		}
+		if got := ledgerSumByAccount(t, s, acc1.ID); got != balance1 {
+			t.Errorf("ledger sum acc1: got %d, want %d (= balance)", got, balance1)
+		}
+		if got := ledgerSumByAccount(t, s, acc2.ID); got != balance2 {
+			t.Errorf("ledger sum acc2: got %d, want %d (= balance)", got, balance2)
+		}
+	})
+
 }

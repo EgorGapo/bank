@@ -54,6 +54,9 @@ func (r *Relay) worker(ctx context.Context, period time.Duration) {
 			}
 			var ids []string
 			for _, e := range events {
+				if ctx.Err() != nil {
+					break
+				}
 				if err := r.producer.Produce(ctx, e.Topic, []byte(e.Key), e.Payload); err != nil {
 					r.logger.Warn("produce failed", "event_id", e.ID, "error", err)
 					continue

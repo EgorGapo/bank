@@ -38,7 +38,6 @@ func buildText(key string, event *domain.OperationEvent) (string, error) {
 	case domain.TypeWithdraw:
 		return fmt.Sprintf("снятие %d", event.Amount), nil
 	case domain.TypeTransfer:
-		// у transfer два события (по from и по to); текст зависит от того, чей это счёт.
 		if event.FromAccountID != nil && key == *event.FromAccountID {
 			return fmt.Sprintf("снятие %d", event.Amount), nil
 		}
