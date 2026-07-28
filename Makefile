@@ -12,9 +12,17 @@ migrate:
 	
 migrate-down: 
 	go run ./cmd/migrate down
-
+	
 up:
-	docker compose up -d
+	docker compose up -d --build   
+api:
+	docker compose up -d --build api
+
+stop:
+	docker compose stop 
+logs:
+	docker compose logs -f --no-log-prefix api | jq
+
 
 down:
 	docker compose down
@@ -24,3 +32,9 @@ test:
 
 lint:
 	$(GOLANGCI) run
+
+
+
+
+
+

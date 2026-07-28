@@ -8,7 +8,7 @@ POST {{base}}/accounts
 
 ### 2. депозит 500
 # @name dep
-POST {{base}}/accounts/{{"acc.response.body.id"}}/deposit
+POST {{base}}/accounts/{{acc.response.body.id}}/deposit
 Idempotency-Key: {{$guid}}
 Content-Type: application/json
 
