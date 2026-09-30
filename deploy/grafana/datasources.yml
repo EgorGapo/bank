@@ -9,7 +9,6 @@ datasources:
     isDefault: true
     editable: false        
 
-  # Раскомментируй, когда добавишь Prometheus (этап 5, метрики):
   # - name: Prometheus
   #   type: prometheus
   #   access: proxy
